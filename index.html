@@ -91,7 +91,7 @@ tr:last-child td{border-bottom:0}
 .modal::before{content:"";display:block;width:40px;height:4px;border-radius:4px;background:rgba(255,255,255,.18);margin:0 auto 14px}
 @keyframes up{from{transform:translateY(40px);opacity:.4}}
 .modal h3{font-size:18px;font-weight:800;margin-bottom:16px;display:flex;align-items:center;gap:8px}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:0 10px}
 .toast{position:fixed;left:50%;bottom:calc(96px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(10px);background:rgba(28,34,48,.95);border:1px solid var(--line2);color:var(--gold1);padding:11px 20px;border-radius:14px;font-size:14px;z-index:99;opacity:0;transition:.25s;pointer-events:none;max-width:90%;box-shadow:0 12px 30px rgba(0,0,0,.5)}
 .toast.show{opacity:1;transform:translateX(-50%)}
 .empty{text-align:center;color:var(--sub);padding:34px 0}
@@ -186,7 +186,7 @@ h2{color:var(--gold)}
 
 <script>
 /* ===== 설정: Apps Script 웹앱 URL을 붙여넣으세요 ===== */
-const API_URL = 'https://script.google.com/macros/s/AKfycbyXzF3AeDztpzertPOy1lR3XSCsuvIjMmO0URGb-75yjuWp_YXBOpkmbVmLFgzzG8ZHnA/exec';
+const API_URL = 'PASTE_APPS_SCRIPT_WEBAPP_URL_HERE';
 
 const qs = new URLSearchParams(location.search);
 let K = qs.get('k') || '';
@@ -396,12 +396,12 @@ function maintForm(id, carId){
     {k:'차량ID',label:'차량',type:'car',req:1},
     {k:'날짜',label:'날짜',type:'date',req:1,half:1},
     {k:'구분',label:'구분',type:'select',opts:S.settings.정비구분||['기타'],half:1},
-    {k:'내용',label:'정비 내용',ph:'엔진오일+필터 교환'},
+    {k:'내용',label:'정비 내용',dep:'구분',labels:{정기점검:'점검 결과',사고수리:'사고·수리 내용'}},
     {k:'업체',label:'정비 업체',half:1},
     {k:'비용',label:'비용(원)',type:'number',half:1},
-    {k:'km',label:'정비 시 주행거리(km)',type:'number'},
-    {k:'다음교체km',label:'다음 교체 km',type:'number',half:1},
-    {k:'다음교체일',label:'다음 교체일',type:'date',half:1},
+    {k:'km',label:'정비 시 계기판 km',type:'number'},
+    {k:'다음교체km',label:'다음 교체 km',type:'number',half:1,dep:'구분',except:['정기점검','사고수리','배터리','기타']},
+    {k:'다음교체일',label:'다음 교체일',type:'date',half:1,dep:'구분',except:['사고수리','기타'],labels:{정기점검:'다음 검사일'}},
     {k:'메모',label:'메모',type:'textarea'}
   ], m, async d => { if(id) d.ID=id; await api('saveMaint', d); toast('저장되었습니다'); },
   id && can('삭제') ? ()=>askDelete('maint',id,m.차량번호+' '+m.구분) : null, !can('입력'));
@@ -430,9 +430,9 @@ function costForm(id, carId){
     {k:'날짜',label:'날짜',type:'date',req:1,half:1},
     {k:'항목',label:'항목',type:'select',opts:S.settings.비용항목||['기타'],half:1},
     {k:'금액',label:'금액(원)',type:'number',req:1,half:1},
-    {k:'리터',label:'주유량(L)',type:'number',half:1},
-    {k:'km',label:'주행거리(km)',type:'number'},
-    {k:'메모',label:'메모'}
+    {k:'리터',label:'주유량(L)',type:'number',half:1,dep:'항목',only:['주유']},
+    {k:'km',label:'주유 시 계기판 km',type:'number',dep:'항목',only:['주유']},
+    {k:'메모',label:'메모',dep:'항목',labels:{주유:'주유소',통행료:'구간 (예: 본사→천안)',주차:'주차 장소',과태료:'위반 내용 (예: 속도위반)',세차:'세차 장소'}}
   ], c, async d => { if(id) d.ID=id; await api('saveCost', d); toast('저장되었습니다'); },
   id && can('삭제') ? ()=>askDelete('cost',id,c.차량번호+' '+c.항목) : null, !can('입력'));
 }
@@ -551,7 +551,7 @@ function formModal(title, fields, vals, onSave, onDelete, readOnly, after){
     else if(f.type==='car') inp=`<select name="${f.k}" ${dis}>${carOpts(v,'차량 선택')}</select>`;
     else if(f.type==='textarea') inp=`<textarea name="${f.k}" rows="2" ${dis}>${esc(v)}</textarea>`;
     else inp=`<input name="${f.k}" type="${f.type||'text'}" ${f.type==='number'?'inputmode="decimal"':''} value="${esc(v)}" placeholder="${esc(f.ph||'')}" ${dis}>`;
-    return `<label class="f"><span class="${f.req?'req':''}">${f.label}</span>${inp}</label>`;
+    return `<label class="f" data-k="${f.k}"><span class="${f.req?'req':''}">${f.label}</span>${inp}</label>`;
   };
   // half 필드는 2개씩 묶기
   let body='', buf=[];
@@ -562,10 +562,20 @@ function formModal(title, fields, vals, onSave, onDelete, readOnly, after){
     ${readOnly?'':`<button class="btn" style="width:100%;margin-top:4px" type="submit">저장</button>`}
     ${onDelete?`<button class="btn red" style="width:100%;margin-top:8px" type="button" id="delBtn">삭제</button>`:''}</form>`);
   if(onDelete) $('delBtn').onclick=onDelete;
+  const fm=$('fm'), hidden={};
+  const vis=()=>fields.forEach(f=>{
+    if(!f.dep) return;
+    const v=fm.elements[f.dep].value, el=fm.querySelector(`[data-k="${f.k}"]`);
+    const show = f.only ? f.only.includes(v) : f.except ? !f.except.includes(v) : true;
+    el.style.display = show ? '' : 'none'; hidden[f.k] = !show;
+    if(f.labels) el.querySelector('span').textContent = f.labels[v] || f.label;
+  });
+  [...new Set(fields.filter(f=>f.dep).map(f=>f.dep))].forEach(k=>fm.elements[k].addEventListener('change',vis));
+  vis();
   $('fm').onsubmit = async e => {
     e.preventDefault();
-    const d={}; new FormData(e.target).forEach((v,k)=>d[k]=String(v).trim());
-    const miss=fields.filter(f=>f.req && !d[f.k]);
+    const d={}; new FormData(e.target).forEach((v,k)=>d[k]=hidden[k]?'':String(v).trim());
+    const miss=fields.filter(f=>f.req && !hidden[f.k] && !d[f.k]);
     if(miss.length) return toast(miss[0].label+'을(를) 입력하세요');
     const b=e.target.querySelector('button[type=submit]'); b.disabled=true; b.textContent='저장 중…';
     try { await onSave(d); closeModal(); if(after) after(); else await reload(true); }
